@@ -42,4 +42,4 @@ yarn-error.log*
 /blob-report/
 /playwright/*
 
-.env.production
+.env.production.env.production 
