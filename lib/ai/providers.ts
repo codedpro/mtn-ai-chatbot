@@ -4,7 +4,8 @@ import {
   wrapLanguageModel,
 } from 'ai';
 import { createGroq } from '@ai-sdk/groq';
-import { xai } from '@ai-sdk/xai';
+// import { xai } from '@ai-sdk/xai'; // ⟵ removed
+
 import {
   artifactModel,
   chatModel,
@@ -13,26 +14,31 @@ import {
 } from './models.test';
 import { isTestEnvironment } from '../constants';
 
-export const myProvider = isTestEnvironment
-  ? customProvider({
+// Initialize Groq client (ensure GROQ_API_KEY is set)
+const groq = createGroq({
+  apiKey: process.env.GROQ_API_KEY!,
+});
+
+export const myProvider =  customProvider({
       languageModels: {
-        'chat-model': chatModel,
-        'chat-model-reasoning': reasoningModel,
-        'title-model': titleModel,
-        'artifact-model': artifactModel,
-      },
-    })
-  : customProvider({
-      languageModels: {
-        'chat-model': xai('grok-2-vision-1212'),
+        // General chat / high-quality generation
+        'chat-model': groq('llama-3.1-8b-instant'),
+
+        // “Reasoning-like” path (middleware extracts <think>…</think> if present)
+        // Groq doesn’t have a special reasoning stream format, but you can still
+        // wrap a strong model and capture any chain-of-thought tags you emit.
         'chat-model-reasoning': wrapLanguageModel({
-          model: xai('grok-3-mini-beta'),
+          model: groq('llama-3.1-70b-versatile'),
           middleware: extractReasoningMiddleware({ tagName: 'think' }),
         }),
-        'title-model': xai('grok-2-1212'),
-        'artifact-model': xai('grok-2-1212'),
+
+        // Fast, cheap titles
+        'title-model': groq('llama-3.1-8b-instant'),
+
+        // Artifacts / utility generations (fast path)
+        'artifact-model': groq('llama-3.1-8b-instant'),
       },
-      imageModels: {
-        'small-model': xai.imageModel('grok-2-image'),
-      },
+
+      // Groq does not provide image generation models.
+      // imageModels: { ... } // ⟵ removed on purpose
     });
