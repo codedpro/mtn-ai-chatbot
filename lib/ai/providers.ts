@@ -3,35 +3,23 @@ import {
   extractReasoningMiddleware,
   wrapLanguageModel,
 } from 'ai';
+import { createGroq } from '@ai-sdk/groq';
 import { xai } from '@ai-sdk/xai';
-import { isTestEnvironment } from '../constants';
-import {
-  artifactModel,
-  chatModel,
-  reasoningModel,
-  titleModel,
-} from './models.test';
-
-export const myProvider = isTestEnvironment
-  ? customProvider({
-      languageModels: {
-        'chat-model': chatModel,
-        'chat-model-reasoning': reasoningModel,
-        'title-model': titleModel,
-        'artifact-model': artifactModel,
-      },
-    })
-  : customProvider({
-      languageModels: {
-        'chat-model': xai('grok-2-1212'),
-        'chat-model-reasoning': wrapLanguageModel({
-          model: xai('grok-3-mini-beta'),
-          middleware: extractReasoningMiddleware({ tagName: 'think' }),
-        }),
-        'title-model': xai('grok-2-1212'),
-        'artifact-model': xai('grok-2-1212'),
-      },
-      imageModels: {
-        'small-model': xai.image('grok-2-image'),
-      },
-    });
+const groq = createGroq({
+  baseURL: 'https://api.groq.com/openai/v1',
+  headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
+});
+export const myProvider = customProvider({
+  languageModels: {
+    'chat-model': groq('meta-llama/llama-4-scout-17b-16e-instruct'),
+    'chat-model-reasoning': wrapLanguageModel({
+      model: groq('deepseek-r1-distill-llama-70b'),
+      middleware: extractReasoningMiddleware({ tagName: 'think' }),
+    }),
+    'title-model': groq('llama-3.1-8b-instant'),
+    'artifact-model': groq('meta-llama/llama-4-scout-17b-16e-instruct'),
+  },
+  imageModels: {
+    'small-model': xai.image('grok-2-image'),
+  },
+});

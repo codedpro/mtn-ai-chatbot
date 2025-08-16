@@ -27,8 +27,9 @@ function PureMessages({
   reload,
   isReadonly,
 }: MessagesProps) {
+  // new: pass in messages.length so the hook knows when to run
   const [messagesContainerRef, messagesEndRef] =
-    useScrollToBottom<HTMLDivElement>();
+    useScrollToBottom<HTMLDivElement>(messages.length);
 
   return (
     <div

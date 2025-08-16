@@ -11,6 +11,7 @@ import { Markdown } from './markdown';
 import { MessageActions } from './message-actions';
 import { PreviewAttachment } from './preview-attachment';
 import { Weather } from './weather';
+import { KpiChart } from './KpiChart';
 import equal from 'fast-deep-equal';
 import { cn } from '@/lib/utils';
 import { Button } from './ui/button';
@@ -148,70 +149,96 @@ const PurePreviewMessage = ({
 
               if (type === 'tool-invocation') {
                 const { toolInvocation } = part;
-                const { toolName, toolCallId, state } = toolInvocation;
+                const { toolName, toolCallId, state, args, result } =
+                  toolInvocation;
 
+                // Loading placeholder
                 if (state === 'call') {
-                  const { args } = toolInvocation;
-
                   return (
                     <div
                       key={toolCallId}
                       className={cx({
-                        skeleton: ['getWeather'].includes(toolName),
+                        skeleton: ['getWeather', 'getKPI'].includes(toolName),
                       })}
                     >
-                      {toolName === 'getWeather' ? (
-                        <Weather />
-                      ) : toolName === 'createDocument' ? (
-                        <DocumentPreview isReadonly={isReadonly} args={args} />
-                      ) : toolName === 'updateDocument' ? (
-                        <DocumentToolCall
-                          type="update"
-                          args={args}
-                          isReadonly={isReadonly}
-                        />
-                      ) : toolName === 'requestSuggestions' ? (
-                        <DocumentToolCall
-                          type="request-suggestions"
-                          args={args}
-                          isReadonly={isReadonly}
-                        />
-                      ) : null}
+                      {/* you could put a spinner or skeleton here */}
                     </div>
                   );
                 }
 
+                // Result rendering
                 if (state === 'result') {
-                  const { result } = toolInvocation;
+                  // Weather
+                  if (toolName === 'getWeather') {
+                    return (
+                      <Weather key={toolCallId} weatherAtLocation={result} />
+                    );
+                  }
 
+                  // KPI charts
+                  if (toolName === 'getKPI') {
+                    // args.kpi: string[]
+                    // result: Array<{ time: string, [kpi]: number }>
+                    return (
+                      <div key={toolCallId} className="flex flex-col gap-4">
+                        {args.kpi.map((k: string) => {
+                          const series = result.map((r: any) => ({
+                            time: r.time,
+                            [k]: r[k],
+                          }));
+                          return (
+                            <KpiChart
+                              key={`${toolCallId}-${k}`}
+                              kpi={k}
+                              data={series}
+                            />
+                          );
+                        })}
+                      </div>
+                    );
+                  }
+
+                  // Document flows
+                  if (toolName === 'createDocument') {
+                    return (
+                      <DocumentPreview
+                        key={toolCallId}
+                        isReadonly={isReadonly}
+                        result={result}
+                      />
+                    );
+                  }
+                  if (toolName === 'updateDocument') {
+                    return (
+                      <DocumentToolResult
+                        key={toolCallId}
+                        type="update"
+                        result={result}
+                        isReadonly={isReadonly}
+                      />
+                    );
+                  }
+                  if (toolName === 'requestSuggestions') {
+                    return (
+                      <DocumentToolResult
+                        key={toolCallId}
+                        type="request-suggestions"
+                        result={result}
+                        isReadonly={isReadonly}
+                      />
+                    );
+                  }
+
+                  // Fallback
                   return (
-                    <div key={toolCallId}>
-                      {toolName === 'getWeather' ? (
-                        <Weather weatherAtLocation={result} />
-                      ) : toolName === 'createDocument' ? (
-                        <DocumentPreview
-                          isReadonly={isReadonly}
-                          result={result}
-                        />
-                      ) : toolName === 'updateDocument' ? (
-                        <DocumentToolResult
-                          type="update"
-                          result={result}
-                          isReadonly={isReadonly}
-                        />
-                      ) : toolName === 'requestSuggestions' ? (
-                        <DocumentToolResult
-                          type="request-suggestions"
-                          result={result}
-                          isReadonly={isReadonly}
-                        />
-                      ) : (
-                        <pre>{JSON.stringify(result, null, 2)}</pre>
-                      )}
-                    </div>
+                    <pre key={toolCallId}>
+                      {JSON.stringify(result, null, 2)}
+                    </pre>
                   );
                 }
               }
+
+              return null;
             })}
 
             {!isReadonly && (
@@ -237,7 +264,6 @@ export const PreviewMessage = memo(
     if (prevProps.message.id !== nextProps.message.id) return false;
     if (!equal(prevProps.message.parts, nextProps.message.parts)) return false;
     if (!equal(prevProps.vote, nextProps.vote)) return false;
-
     return true;
   },
 );
