@@ -6,14 +6,6 @@ import {
 import { createGroq } from '@ai-sdk/groq';
 // import { xai } from '@ai-sdk/xai'; // ⟵ removed
 
-import {
-  artifactModel,
-  chatModel,
-  reasoningModel,
-  titleModel,
-} from './models.test';
-import { isTestEnvironment } from '../constants';
-
 // Initialize Groq client (ensure GROQ_API_KEY is set)
 const groq = createGroq({
   apiKey: process.env.GROQ_API_KEY!,
