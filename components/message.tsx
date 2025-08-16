@@ -1,6 +1,4 @@
 'use client';
-
-import type { UIMessage } from 'ai';
 import cx from 'classnames';
 import { AnimatePresence, motion } from 'framer-motion';
 import { memo, useState } from 'react';
@@ -13,13 +11,18 @@ import { PreviewAttachment } from './preview-attachment';
 import { Weather } from './weather';
 import { KpiChart } from './KpiChart';
 import equal from 'fast-deep-equal';
-import { cn } from '@/lib/utils';
+import { cn, sanitizeText } from '@/lib/utils';
 import { Button } from './ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { MessageEditor } from './message-editor';
 import { DocumentPreview } from './document-preview';
 import { MessageReasoning } from './message-reasoning';
-import { UseChatHelpers } from '@ai-sdk/react';
+import type { UseChatHelpers } from '@ai-sdk/react';
+import type { ChatMessage } from '@/lib/types';
+import { useDataStream } from './data-stream-provider';
+
+// Type narrowing is handled by TypeScript's control flow analysis
+// The AI SDK provides proper discriminated unions for tool calls
 
 const PurePreviewMessage = ({
   chatId,
@@ -27,18 +30,26 @@ const PurePreviewMessage = ({
   vote,
   isLoading,
   setMessages,
-  reload,
+  regenerate,
   isReadonly,
+  requiresScrollPadding,
 }: {
   chatId: string;
-  message: UIMessage;
+  message: ChatMessage;
   vote: Vote | undefined;
   isLoading: boolean;
-  setMessages: UseChatHelpers['setMessages'];
-  reload: UseChatHelpers['reload'];
+  setMessages: UseChatHelpers<ChatMessage>['setMessages'];
+  regenerate: UseChatHelpers<ChatMessage>['regenerate'];
   isReadonly: boolean;
+  requiresScrollPadding: boolean;
 }) => {
   const [mode, setMode] = useState<'view' | 'edit'>('view');
+
+  const attachmentsFromMessage = message.parts.filter(
+    (part) => part.type === 'file',
+  );
+
+  useDataStream();
 
   return (
     <AnimatePresence>
@@ -66,16 +77,24 @@ const PurePreviewMessage = ({
             </div>
           )}
 
-          <div className="flex flex-col gap-4 w-full">
-            {message.experimental_attachments && (
+          <div
+            className={cn('flex flex-col gap-4 w-full', {
+              'min-h-96': message.role === 'assistant' && requiresScrollPadding,
+            })}
+          >
+            {attachmentsFromMessage.length > 0 && (
               <div
                 data-testid={`message-attachments`}
                 className="flex flex-row justify-end gap-2"
               >
-                {message.experimental_attachments.map((attachment) => (
+                {attachmentsFromMessage.map((attachment) => (
                   <PreviewAttachment
                     key={attachment.url}
-                    attachment={attachment}
+                    attachment={{
+                      name: attachment.filename ?? 'file',
+                      contentType: attachment.mediaType,
+                      url: attachment.url,
+                    }}
                   />
                 ))}
               </div>
@@ -85,12 +104,12 @@ const PurePreviewMessage = ({
               const { type } = part;
               const key = `message-${message.id}-part-${index}`;
 
-              if (type === 'reasoning') {
+              if (type === 'reasoning' && part.text?.trim().length > 0) {
                 return (
                   <MessageReasoning
                     key={key}
                     isLoading={isLoading}
-                    reasoning={part.reasoning}
+                    reasoning={part.text}
                   />
                 );
               }
@@ -124,7 +143,7 @@ const PurePreviewMessage = ({
                             message.role === 'user',
                         })}
                       >
-                        <Markdown>{part.text}</Markdown>
+                        <Markdown>{sanitizeText(part.text)}</Markdown>
                       </div>
                     </div>
                   );
@@ -140,105 +159,155 @@ const PurePreviewMessage = ({
                         message={message}
                         setMode={setMode}
                         setMessages={setMessages}
-                        reload={reload}
+                        regenerate={regenerate}
                       />
                     </div>
                   );
                 }
               }
 
-              if (type === 'tool-invocation') {
-                const { toolInvocation } = part;
-                const { toolName, toolCallId, state, args, result } =
-                  toolInvocation;
+              if (type === 'tool-getWeather') {
+                const { toolCallId, state } = part;
 
-                // Loading placeholder
-                if (state === 'call') {
+                if (state === 'input-available') {
                   return (
-                    <div
-                      key={toolCallId}
-                      className={cx({
-                        skeleton: ['getWeather', 'getKPI'].includes(toolName),
-                      })}
-                    >
-                      {/* you could put a spinner or skeleton here */}
+                    <div key={toolCallId} className="skeleton">
+                      <Weather />
                     </div>
                   );
                 }
 
-                // Result rendering
-                if (state === 'result') {
-                  // Weather
-                  if (toolName === 'getWeather') {
-                    return (
-                      <Weather key={toolCallId} weatherAtLocation={result} />
-                    );
-                  }
+                if (state === 'output-available') {
+                  const { output } = part;
+                  return (
+                    <div key={toolCallId}>
+                      <Weather weatherAtLocation={output} />
+                    </div>
+                  );
+                }
+              }
 
-                  // KPI charts
-                  if (toolName === 'getKPI') {
-                    // args.kpi: string[]
-                    // result: Array<{ time: string, [kpi]: number }>
+              if (type === 'tool-createDocument') {
+                const { toolCallId, state } = part;
+
+                if (state === 'input-available') {
+                  const { input } = part;
+                  return (
+                    <div key={toolCallId}>
+                      <DocumentPreview isReadonly={isReadonly} args={input} />
+                    </div>
+                  );
+                }
+
+                if (state === 'output-available') {
+                  const { output } = part;
+
+                  if ('error' in output) {
                     return (
-                      <div key={toolCallId} className="flex flex-col gap-4">
-                        {args.kpi.map((k: string) => {
-                          const series = result.map((r: any) => ({
-                            time: r.time,
-                            [k]: r[k],
-                          }));
-                          return (
-                            <KpiChart
-                              key={`${toolCallId}-${k}`}
-                              kpi={k}
-                              data={series}
-                            />
-                          );
-                        })}
+                      <div
+                        key={toolCallId}
+                        className="text-red-500 p-2 border rounded"
+                      >
+                        Error: {String(output.error)}
                       </div>
                     );
                   }
 
-                  // Document flows
-                  if (toolName === 'createDocument') {
-                    return (
-                      <DocumentPreview
-                        key={toolCallId}
-                        isReadonly={isReadonly}
-                        result={result}
-                      />
-                    );
-                  }
-                  if (toolName === 'updateDocument') {
-                    return (
-                      <DocumentToolResult
-                        key={toolCallId}
-                        type="update"
-                        result={result}
-                        isReadonly={isReadonly}
-                      />
-                    );
-                  }
-                  if (toolName === 'requestSuggestions') {
-                    return (
-                      <DocumentToolResult
-                        key={toolCallId}
-                        type="request-suggestions"
-                        result={result}
-                        isReadonly={isReadonly}
-                      />
-                    );
-                  }
-
-                  // Fallback
                   return (
-                    <pre key={toolCallId}>
-                      {JSON.stringify(result, null, 2)}
-                    </pre>
+                    <div key={toolCallId}>
+                      <DocumentPreview
+                        isReadonly={isReadonly}
+                        result={output}
+                      />
+                    </div>
                   );
                 }
               }
 
-              return null;
+              if (type === 'tool-updateDocument') {
+                const { toolCallId, state } = part;
+
+                if (state === 'input-available') {
+                  const { input } = part;
+
+                  return (
+                    <div key={toolCallId}>
+                      <DocumentToolCall
+                        type="update"
+                        args={input}
+                        isReadonly={isReadonly}
+                      />
+                    </div>
+                  );
+                }
+
+                if (state === 'output-available') {
+                  const { output } = part;
+
+                  if ('error' in output) {
+                    return (
+                      <div
+                        key={toolCallId}
+                        className="text-red-500 p-2 border rounded"
+                      >
+                        Error: {String(output.error)}
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div key={toolCallId}>
+                      <DocumentToolResult
+                        type="update"
+                        result={output}
+                        isReadonly={isReadonly}
+                      />
+                    </div>
+                  );
+                }
+              }
+
+              if (type === 'tool-requestSuggestions') {
+                const { toolCallId, state } = part;
+
+                if (state === 'input-available') {
+                  const { input } = part;
+                  return (
+                    <div key={toolCallId}>
+                      <DocumentToolCall
+                        type="request-suggestions"
+                        args={input}
+                        isReadonly={isReadonly}
+                      />
+                    </div>
+                  );
+                }
+
+                if (state === 'output-available') {
+                  const { output } = part;
+
+                  if ('error' in output) {
+                    return (
+                      <div
+                        key={toolCallId}
+                        className="text-red-500 p-2 border rounded"
+                      >
+                        Error: {String(output.error)}
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div key={toolCallId}>
+                      <DocumentToolResult
+                        type="request-suggestions"
+                        result={output}
+                        isReadonly={isReadonly}
+                      />
+                    </div>
+                  );
+                }
+              }
             })}
 
             {!isReadonly && (
@@ -262,9 +331,12 @@ export const PreviewMessage = memo(
   (prevProps, nextProps) => {
     if (prevProps.isLoading !== nextProps.isLoading) return false;
     if (prevProps.message.id !== nextProps.message.id) return false;
+    if (prevProps.requiresScrollPadding !== nextProps.requiresScrollPadding)
+      return false;
     if (!equal(prevProps.message.parts, nextProps.message.parts)) return false;
     if (!equal(prevProps.vote, nextProps.vote)) return false;
-    return true;
+
+    return false;
   },
 );
 
@@ -274,7 +346,7 @@ export const ThinkingMessage = () => {
   return (
     <motion.div
       data-testid="message-assistant-loading"
-      className="w-full mx-auto max-w-3xl px-4 group/message "
+      className="w-full mx-auto max-w-3xl px-4 group/message min-h-96"
       initial={{ y: 5, opacity: 0 }}
       animate={{ y: 0, opacity: 1, transition: { delay: 1 } }}
       data-role={role}
